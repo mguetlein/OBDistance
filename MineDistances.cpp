@@ -11,7 +11,7 @@ using namespace std;
 using namespace OpenBabel;
 
 extern bool DEBUG_OUT;
-
+extern bool CACHE_FRAGMENTS;
 
 MineDistances::MineDistances(Data * data,
 		double rel_min_freq_per_class, double freq_ratio_tolerance) {
@@ -19,18 +19,23 @@ MineDistances::MineDistances(Data * data,
 
 	this->data = data;
 
-	abs_freq_active = max(1,(int)(data->get_num_actives() * rel_min_freq_per_class));
-	abs_freq_inactive = max(1,(int)(data->get_num_inactives() * rel_min_freq_per_class));
-
-	cerr << abs_freq_active << "/" << abs_freq_inactive << " minimum frequency in active/inactive structures" << endl;
-
-	double active_ratio = data->get_num_actives() / (double) data->get_num_inactives();
-
-	freq_ratio_min = active_ratio - active_ratio * freq_ratio_tolerance;
-	freq_ratio_max = active_ratio + active_ratio * freq_ratio_tolerance;
-
-	cerr << "[" << freq_ratio_min << " - " << freq_ratio_max << "] range for tolerated frequency ratio" << endl;
-
+	if ( rel_min_freq_per_class > 0 )
+	{
+		abs_freq_active = max(1,(int)(data->get_num_actives() * rel_min_freq_per_class));
+		abs_freq_inactive = max(1,(int)(data->get_num_inactives() * rel_min_freq_per_class));
+		cerr << abs_freq_active << "/" << abs_freq_inactive << " minimum frequency in active/inactive structures" << endl;
+		double active_ratio = data->get_num_actives() / (double) data->get_num_inactives();
+		freq_ratio_min = active_ratio - active_ratio * freq_ratio_tolerance;
+		freq_ratio_max = active_ratio + active_ratio * freq_ratio_tolerance;
+		cerr << "[" << freq_ratio_min << " - " << freq_ratio_max << "] range for tolerated frequency ratio" << endl;
+	}
+	else
+	{
+		abs_freq_active = 0;
+		abs_freq_inactive = 0;
+		freq_ratio_min = 0;
+		freq_ratio_max = 0;
+	}
 //	this->min_frequency = min_frequency;
 //	this->min_frequency_per_class = min_frequency_per_class;
 
@@ -38,6 +43,22 @@ MineDistances::MineDistances(Data * data,
 }
 
 MineDistances::~MineDistances() {
+}
+
+void MineDistances::free_memory(int index)
+{
+	if(DEBUG_OUT)
+		cerr << "free memory for fragment: " << index << "\n" << flush;
+
+	vector<int> * occ = data->get_smarts_occurences(index);
+	for (unsigned int i = 0; i < occ->size(); i++)
+	{
+		if(DEBUG_OUT)
+			cerr << "  free molecule: " << i << "\n" << flush;
+		data->free_memory_from_id(occ->at(i),index);
+		if ( mol_distances.find(occ->at(i)) != mol_distances.end() )
+			mol_distances[occ->at(i)]->free_memory( index );
+	}
 }
 
 bool MineDistances::calcDistance(int index1, int index2, vector<int> * occurences, bool check_freq)
@@ -53,6 +74,9 @@ bool MineDistances::calcDistance(int index1, int index2, vector<int> * occurence
 			time (&time_last_message);
 		}
 	}
+
+	if(DEBUG_OUT)
+		cerr << "    calculating distance: " << index1 << " <-> " << index2 << "\n" << flush;
 
 	//OBSmartsPattern smartsPattern;
 
@@ -76,13 +100,13 @@ bool MineDistances::calcDistance(int index1, int index2, vector<int> * occurence
 		vector<vector <int> > map2 = smartsPattern.GetUMapList();
 		 */
 
-		vector<vector <int> > * map1 = data->get_matches(occurences->at(i), index1);//, true);
-		vector<vector <int> > * map2 = data->get_matches(occurences->at(i), index2);
+		vector<vector <int> > * map1 = data->get_matches_from_id(occurences->at(i), index1);//, true);
+		vector<vector <int> > * map2 = data->get_matches_from_id(occurences->at(i), index2);
 
 		if (map1->size() < 1 || map2->size() <1)
 		{
 			cerr << "\nERROR while calculating the distance: no match" << endl;
-			cerr << "smiles: "<< *data->get_smiles(occurences->at(i)) << endl;
+			cerr << "smiles: "<< *data->get_smiles_from_id(occurences->at(i)) << endl;
 			cerr << "smarts 1: '" << *data->get_smarts(index1)<< "'" << endl;
 			cerr << "matches: "<< map1->size() << endl;
 			cerr << "smarts 2: '" << *data->get_smarts(index2)<< "'" << endl;
@@ -91,15 +115,15 @@ bool MineDistances::calcDistance(int index1, int index2, vector<int> * occurence
 			OBMol * mol = new OBMol();
 			OBConversion obconversion;
 			obconversion.SetInFormat("smiles");
-			obconversion.ReadString(mol,*data->get_smiles(occurences->at(i)));
+			obconversion.ReadString(mol,*data->get_smiles_from_id(occurences->at(i)));
 			OBSmartsPattern smartsPattern;
 			smartsPattern.Init( *data->get_smarts(index2) );
 			smartsPattern.Match( *mol );
 			vector<vector <int> > map = smartsPattern.GetMapList();
 			cerr << "map-size of smarts 2: " << map.size() << endl;
 
-			//continue;
-			exit(1);
+			continue;
+			//exit(1);
 		}
 
 		if(DEBUG_OUT)
@@ -135,48 +159,54 @@ bool MineDistances::calcDistance(int index1, int index2, vector<int> * occurence
 		}
 
 		if (DEBUG_OUT)
-			cerr << "    mol: "<< *data->get_smiles(occurences->at(i)) <<"\n";
+			cerr << "    mol: "<< *data->get_smiles_from_id(occurences->at(i)) <<"\n";
 
 		if ( mol_distances.find(occurences->at(i)) == mol_distances.end() )
 		{
 			if (data->is_3d_enabled())
-				mol_distances[occurences->at(i)] = new MolDistance3D( data->get_mol(occurences->at(i)) );
+				mol_distances[occurences->at(i)] = new MolDistance3D( data->get_mol_from_id(occurences->at(i)) );
 			else
-				mol_distances[occurences->at(i)] = new MolDistance2D( data->get_mol(occurences->at(i)) );
+				mol_distances[occurences->at(i)] = new MolDistance2D( data->get_mol_from_id(occurences->at(i)) );
 		}
 
-		vector<double> * distances = mol_distances[occurences->at(i)]->get_distances( index1, map1, index2, map2 );
+		vector<double> distances = mol_distances[occurences->at(i)]->get_distances( index1, map1, index2, map2 );
 
-		if (distances->size()>0)
+		if (distances.size()>0)
 		{
 			occurence_indices.push_back(occurences->at(i));
-			occurence_distances.push_back(*distances);
+			occurence_distances.push_back(distances);
 		}
 
-		if (distances->size() >= 50 )
+		if (distances.size() >= 50 )
 		{
-			int unique[distances->size()];
-			for (unsigned int w = 0; w < distances->size(); w++)
+			int unique[distances.size()];
+			for (unsigned int w = 0; w < distances.size(); w++)
 				unique[w] = -1;
 			int uCount = 0;
-			for (unsigned int w = 0; w < distances->size(); w++)
+			for (unsigned int w = 0; w < distances.size(); w++)
 			{
 				if (unique[w]==-1)
 				{
 					unique[w] = uCount;
-					for (unsigned int y = w+1; y < distances->size(); y++)
-						if (distances->at(w) == distances->at(y))
+					for (unsigned int y = w+1; y < distances.size(); y++)
+						if (distances.at(w) == distances.at(y))
 							unique[y] = uCount;
 
 					uCount++;
 				}
 			}
 			cerr << "WARNING: '" << *data->get_smarts(index1) << "' ("<< index1<<") and '" << *data->get_smarts(index2)
-			<< "' ("<< index2<<") have " << distances->size() << " occurence-pairs (unique: "<< uCount << ") in '" << *data->get_smiles(occurences->at(i)) << "' ("<< occurences->at(i)<<")" << endl;
+			<< "' ("<< index2<<") have " << distances.size() << " occurence-pairs (unique: "<< uCount << ") in '" << *data->get_smiles_from_id(occurences->at(i)) << "' ("<< occurences->at(i)<<")" << endl;
 
-//			for (unsigned int w = 0; w < distances->size(); w++)
-//				cerr << distances->at(w)<<"\n";
+//			for (unsigned int w = 0; w < distances.size(); w++)
+//				cerr << distances.at(w)<<"\n";
 //			exit(1);
+		}
+
+		if(!CACHE_FRAGMENTS)
+		{
+			free_memory(index1);
+			free_memory(index2);
 		}
 	}
 
@@ -232,24 +262,35 @@ bool MineDistances::endsWithCChain(string * smarts)
 
 bool MineDistances::hasOnlyC(int smartIndex)
 {
-	OBMol mol;
+//	OBMol mol;
+	OBSmartsPattern sp;
 
 	// if (smarts_mols.find(smartIndex) == smarts_mols.end())
 	// {
-		OBConversion obconversion;
-		obconversion.SetInFormat("smiles");
-		obconversion.ReadString(&mol, *data->get_smarts(smartIndex));
+
+//		OBConversion obconversion;
+//		obconversion.SetInFormat("smiles");
+//		obconversion.ReadString(&mol, *data->get_smarts(smartIndex));
+	sp.Init(*data->get_smarts(smartIndex));
+
 	//	smarts_mols[smartIndex] = mol;
 	//}
 	//else
 	//	mol = smarts_mols[smartIndex];
 
-	OBAtom atom;
-	FOR_ATOMS_OF_MOL(atom, mol)
-		if (!atom->IsCarbon())
-			return false;
-	if (DEBUG_OUT)
-		cerr << "    only C: "<<*data->get_smarts(smartIndex)<<"\n";
+
+//	OBAtom atom;
+//	FOR_ATOMS_OF_MOL(atom, mol)
+//		if (!atom->IsCarbon())
+//			return false;
+    for(unsigned int i = 0; i < sp.NumAtoms(); i++)
+    	//cerr << "atom " << i << " " << *data->get_smarts(smartIndex) << " is " << sp.GetAtomicNum(i) << "\n";
+    	if (sp.GetAtomicNum(i) != 6)
+    		return false;
+
+
+//	if (DEBUG_OUT)
+//		cerr << "    only C: "<<*data->get_smarts(smartIndex)<<"\n";
 	return true;
 }
 
@@ -364,15 +405,15 @@ void MineDistances::mine( bool mineOneFragmentDistances )
 			if (calcDistance(i,j,&joined_occurences, true))
 				validPairCount++;
 		}
-	}
 
+		free_memory(i);
+	}
 	cerr << "Mining done ("<< validPairCount << "/" << num_max_pairs << " pairs valid)" << endl;
 }
 
 vector<int> MineDistances::join_occurences(int smarts_index_1, int smarts_index_2)
 {
 	vector<int> joined_occurences;
-
 	vector<int> * occ_1 = data->get_smarts_occurences(smarts_index_1);
 	vector<int> * occ_2 = data->get_smarts_occurences(smarts_index_2);
 
@@ -400,7 +441,11 @@ void MineDistances::check()
 
 	for (current_pair = 0; current_pair < data->num_distance_pairs(); current_pair++)
 	{
+		if(DEBUG_OUT)
+			cerr << "\nchecking pair: " << current_pair << " (of " << data->num_distance_pairs() << ")\n" << flush;
 		int * idx = data->get_distance_pair(current_pair);
+		if(DEBUG_OUT)
+			cerr << "pair indices: " << idx[0] << " and " << idx[1] << " (of " << data->num_smarts() << ")\n" << flush;
 		vector<int> joined_occurences = join_occurences(idx[0], idx[1]);
 		calcDistance(idx[0],idx[1],&joined_occurences, false);
 	}

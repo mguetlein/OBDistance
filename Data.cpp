@@ -5,11 +5,15 @@
  *      Author: martin
  */
 
+#include <boost/regex.hpp>
+
 #include "Data.h"
 
 using namespace std;
 using namespace OpenBabel;
 
+extern bool DEBUG_OUT;
+extern bool CACHE_FRAGMENTS;
 /*
 Data::Data(char* smi_file, char* fragment_file, bool aromaticity) {
 
@@ -19,7 +23,31 @@ Data::Data(char* smi_file, char* fragment_file, bool aromaticity) {
 	readSmarts(fragment_file);
 }*/
 
-Data::Data(char* smi_file, char* fragment_file, bool aromaticity, bool enable_3d, char* activity_file, char* dist_file) {
+std::vector<std::string> &split(const std::string &s, char delim, std::vector<std::string> &elems) {
+    std::stringstream ss(s);
+    std::string item;
+    while(std::getline(ss, item, delim)) {
+        elems.push_back(item);
+    }
+    return elems;
+}
+
+string noHydrogenFormula( OBMol * mol )
+{
+//	 string formula = mol->GetFormula();
+//     return tr1::regex_replace(formula, rx("H"), "");
+
+     //std::locale::global(std::locale("German"));
+	 boost::regex expr("H[0-9]*");
+	 std::string fmt("\\2\\1");
+	 std::string res = boost::regex_replace(mol->GetFormula(), expr, fmt);
+	 return res;
+
+}
+
+
+Data::Data(char* smi_file, char* fragment_file, bool aromaticity, bool enable_3d,
+		char* activity_file, char* dist_file, char* sdf_file) { //, char* sdf_smiles_file) {
 
 	this->aromaticity = aromaticity;
 	this->enable_3d = enable_3d;
@@ -30,17 +58,174 @@ Data::Data(char* smi_file, char* fragment_file, bool aromaticity, bool enable_3d
 		readActivity(activity_file);
 	if (dist_file)
 		readDist(dist_file);
+	if (sdf_file)
+		readMolsFromSdf(sdf_file); //, sdf_smiles_file);
 }
 
 Data::~Data() {
 	// TODO Auto-generated destructor stub
 }
 
+void Data::readMolsFromSdf(char * sdf_file) { //, char * sdf_smiles_file) {
+
+	cerr << "reading mols from sdf file: "<< sdf_file << endl; //", with according smiles file: " << sdf_smiles_file << endl;
+
+//	vector<string> smiles;
+//	string line;
+//	ifstream myfile (sdf_smiles_file);
+//	if (myfile.is_open())
+//	{
+//	  while ( myfile.good() )
+//	  {
+//	    getline (myfile,line);
+//	    //cerr << line << endl;
+//	    if (line.size()>0)
+//	    	smiles.push_back(line);
+//	  }
+//	  myfile.close();
+//	}
+//    else
+//    {
+//    	cerr << "Unable to open file "<< sdf_smiles_file<<endl;
+//    }
+
+	OBConversion obconversion;
+	obconversion.SetInFormat("sdf");
+	obconversion.SetOutFormat("smiles");
+
+//	OBConversion obconversion2;
+//	obconversion2.SetInFormat("smiles");
+
+	OBMol * mol = new OBMol();
+	bool notatend = obconversion.ReadFile(mol,sdf_file);
+	unsigned int count = 0;
+	while (notatend)
+	{
+
+
+//		string inchi = obconversion.WriteString(mol,true);
+//		if ( sdfMolsSmiles.find(inchi) != sdfMolsSmiles.end())
+//		{
+//			cerr << "duplicate inchi "+inchi << endl;
+////			if ( abs(sdfMolsSmiles[inchi]->GetMolWt() - mol->GetMolWt() ) > 0.001 )
+////			{
+////				cerr << "diff mol weight "<<sdfMolsSmiles[inchi]->GetMolWt()<<" != "<<mol->GetMolWt()<<endl;
+////				exit(1);
+////			}
+//		}
+//		else
+//		{
+//			cerr << "<< "<<inchi<<endl;
+//			if ( smiles.at(count) != obconversion.WriteString(mol,true) )
+//			{
+//				cerr << "wrong smiles at "<<count<<endl;
+
+//				OBMol m;
+//				obconversion2.ReadString(&m, smiles.at(count));
+//
+//				if (mol->GetFormula() != m.GetFormula())
+//				{
+//					cerr << "formula does not fit" << endl;
+//					cerr << count;
+//					cerr << smiles.at(count) << endl;
+//					cerr << "formula from smiles " << m.GetFormula() << endl;
+//					cerr << m.GetMolWt() << endl;
+//					cerr << "formula from sdf    " << mol->GetFormula() << endl;
+//					cerr << mol->GetMolWt() << endl;
+//					exit(1);
+//				}
+
+				//cerr << count << endl;
+				//cerr << smiles.at(count) << endl;
+				//cerr << obconversion.WriteString(mol,true) << endl;
+//				exit(1);
+//			}
+			//sdfMolsSmiles[smiles.at(count)] = mol;
+
+
+//			cerr << mol->GetFormula() << endl;
+//			sdfMolsSmiles[mol->GetFormula()] = mol;
+
+			// for some pdb files the compound name is added to the smiles
+			string smi = obconversion.WriteString(mol,true);
+			vector<string> v;
+			split(smi,'\t',v);
+			if (v.size() > 0)
+				smi = v[0];
+			string formula = noHydrogenFormula(mol);
+
+			int match = -1;
+			for (unsigned int i = 0 ; i < smiles.size() ; i++ )
+			{
+				if (smi == smiles[i])
+				{
+					match = i;
+					break;
+				}
+			}
+			if (match == -1)
+			{
+				for (unsigned int i = 0 ; i < smiles.size() ; i++ )
+				{
+					OBMol m;
+					OBConversion obconversion;
+					obconversion.SetInFormat("smiles");
+					obconversion.ReadString(&m, smiles.at(i));
+					string f = noHydrogenFormula(&m);
+					cerr << "    " << f << endl;
+					if (f == formula)
+					{
+						if (match != -1)
+						{
+							cerr << "two formulas match" << endl;
+							exit(1);
+						}
+						cerr << "    match" << endl;
+						match = i;
+					}
+				}
+			}
+			if (match == -1)
+				cerr << "no match in smiles file found" << endl;
+			if (DEBUG_OUT || match==-1)
+			{
+				cerr << sdfMolsSmiles.size() << endl;
+				cerr << "  " << smi << endl;
+				cerr << "  " << formula << endl; // mol->GetFormula() << endl;
+				cerr << "  " << mol->Has3D() << endl;
+
+			}
+//			if (match == -1)
+//				exit(1);
+
+			if (!mol->Has3D())
+				cerr << "  warning: no 3D info for " << smi << endl;
+
+			if (match != -1)
+				sdfMolsSmiles[smiles[match]] = mol;
+
+//			sdfMolsSmiles[smi] = mol;
+			//sdfMolsFormula[noHydrogenFormula(mol)] = mol;
+//		}
+		mol = new OBMol();
+		notatend = obconversion.Read(mol);
+		count++;
+	}
+//	if (smiles.size() != count)
+//	{
+//		cerr << "size does matter: " << smiles.size() << " != " << count << endl;
+//		exit(1);
+//	}
+	//exit(1);
+	//delete mol;
+}
+
+
 
 void Data::readSmiles(char * smiles_file) {
 	string line;
 	string tmp_field;
-	string id;
+	int id;
 	string smi;
 
 	//vector<string> ids;
@@ -81,7 +266,7 @@ void Data::readSmiles(char * smiles_file) {
 		while (getline(iss, tmp_field, '\t')) { // split at tabs
 
 			if (field_nr == 0)
-				id = tmp_field;
+				id = atoi(tmp_field.c_str());
 			else if (field_nr == 1)
 				smi = tmp_field;
 
@@ -92,6 +277,7 @@ void Data::readSmiles(char * smiles_file) {
 			cerr << "WARNING: empty smiles, line-nr: "<<line_nr<<", line: '"<<line<<"'"<<endl;
 
 		ids.push_back(id);
+		id_to_smiles_index[id] = smiles.size();
 		smiles.push_back(smi);
 
 		// ID
@@ -226,7 +412,7 @@ void Data::readSmarts(char * fragment_file) {
 void Data::readActivity(char * activity_file) {
 	string line;
 	string tmp_field;
-	string id;
+	int id;
 	string act;
 
 	int line_nr = 0;
@@ -244,7 +430,6 @@ void Data::readActivity(char * activity_file) {
 	//out->print_err();
 
 	line_nr = 0;
-
 	num_actives = 0;
 	num_inactives = 0;
 
@@ -259,7 +444,14 @@ void Data::readActivity(char * activity_file) {
 		while (getline(iss, tmp_field, '\t')) { // split at tabs
 
 			if (field_nr == 0)
-				id = tmp_field;
+			{
+				id = atoi(tmp_field.c_str());
+				if (id != ids[line_nr])
+				{
+					cerr << "order smiles & classes is not equal, implement id instead of line usage for class values" << endl;
+					exit(1);
+				}
+			}
 			else if (field_nr == 2)
 				act = tmp_field;
 
@@ -272,6 +464,13 @@ void Data::readActivity(char * activity_file) {
 			num_inactives++;
 		activity.push_back(act == "1");
 		line_nr++;
+	}
+
+	if (activity.size() != smiles.size())
+	{
+		cerr << "Number of activties (" << activity.size() <<
+			") does not match number of smiles (" << smiles.size() << ")" << endl;
+		exit(1);
 	}
 
 	cerr << num_actives << "/" << num_inactives << " active/inactive structures (smiles)" << endl;
@@ -321,6 +520,12 @@ void Data::readDist(char * dist_file) {
 			 break;
 		}
 
+		if ( (min(idx1,idx2) < 0) || (max(idx1,idx2) >= (signed int)smarts.size()))
+		{
+			cerr << "Invalid smarts indices: " << tmp_field << endl;
+			exit(1);
+		}
+
 //		cerr << idx1 << " " << idx2 << endl;
 		int * indices = new int[2];
 		indices[0] = idx1;
@@ -335,19 +540,111 @@ void Data::readDist(char * dist_file) {
 }
 
 
-
 OBMol * Data::get_mol(int smiles_index)
 {
+	if (DEBUG_OUT)
+		cerr << "      get mol for smiles_index: " << smiles_index << ", smiles: " << smiles.at(smiles_index) << endl;
+
 	if ( mols.find(smiles_index) == mols.end())
 	{
-		OBMol * mol = new OBMol();
+		if (DEBUG_OUT)
+			cerr << "        not yet created" << endl;
+
+		OBMol m;
 		OBConversion obconversion;
 		obconversion.SetInFormat("smiles");
-		obconversion.ReadString(mol, smiles.at(smiles_index));
+		obconversion.ReadString(&m, smiles.at(smiles_index));
+		string formula = noHydrogenFormula(&m); // m.GetFormula();
+
+		if (DEBUG_OUT)
+			cerr << "        formula is " << formula << endl;
+
+		OBMol * mol;
+
+		if (sdfMolsSmiles.size() == 0)
+		{
+			mol = new OBMol();
+			OBConversion obconversion;
+			obconversion.SetInFormat("smiles");
+			obconversion.ReadString(mol, smiles.at(smiles_index));
+
+			if (this->enable_3d)
+			{
+				// build 3d coordinates
+				if (DEBUG_OUT)
+					cerr << "    build 3D ...";
+				OBBuilder builder;
+				builder.Build(*mol);
+				if (DEBUG_OUT)
+					cerr << "    done" << endl;
+			}
+		}
+		else if (sdfMolsSmiles.size() > 0)
+		{
+			if (DEBUG_OUT)
+				cerr << "        load from sdf"<< endl;
+
+//			obconversion.SetOutFormat("inchi");
+//			string inchi = obconversion.WriteString(&m,true);
+
+			if ( sdfMolsSmiles.find(smiles.at(smiles_index)) == sdfMolsSmiles.end())
+			//if ( sdfMolsSmiles.find(formula) == sdfMolsSmiles.end())
+			{
+//				bool formulaFound = false;
+//				if ( sdfMolsFormula.find(formula) == sdfMolsFormula.end())
+//				{
+//					formulaFound = true;
+//				}
+
+
+				cerr << "could not find mol in sdf file" << endl;
+				cerr << smiles_index << endl;
+				cerr << smiles.at(smiles_index) << endl;
+				cerr << formula << endl;
+//				cerr << formulaFound << endl;
+				exit(1);
+
+//				mol = new OBMol();
+//				OBConversion obconversion;
+//				obconversion.SetInFormat("smiles");
+//				obconversion.ReadString(mol, smiles.at(smiles_index));
+			}
+			else
+			{
+				mol = sdfMolsSmiles[smiles.at(smiles_index)];
+				string form = noHydrogenFormula(mol);
+				//mol = sdfMolsSmiles[formula];
+
+				if (DEBUG_OUT)
+				{
+					cerr << "        found in sdf with equal smiles, checking formula"<< endl;
+					//cerr << "        " << sdfMolsSmiles[smiles.at(smiles_index)]->GetFormula() << endl;
+					//cerr << "        " << mol->GetFormula() << endl;
+				}
+				if (form != formula)
+				{
+					cerr << "formula does not fit" << endl;
+					cerr << smiles_index << endl;
+					cerr << smiles.at(smiles_index) << endl;
+					cerr << formula << endl;
+					cerr << form << endl;
+					exit(1);
+				}
+
+				if (DEBUG_OUT)
+				{
+					cerr << "        formula is equal"<< endl;
+					cerr << "        3d available "<< mol->Has3D() << endl;
+				}
+			}
+		}
 
 		//cerr << "unsetting aromatic: "<< smiles.at(smiles_index) << "\n";
 		if (!aromaticity)
 		{
+			if (DEBUG_OUT)
+				cerr << "        unset aromaticity"<< endl;
+
 			OBAtom a;
 			FOR_ATOMS_OF_MOL(a,*mol)
 				a->UnsetAromatic();
@@ -360,7 +657,32 @@ OBMol * Data::get_mol(int smiles_index)
 		mols[smiles_index] = mol;
 	}
 
+	if (DEBUG_OUT)
+	{
+		cerr << "      mol loading done"<< endl;
+		cerr << "      3d available "<< mols[smiles_index]->Has3D() << endl;
+	}
 	return mols[smiles_index];
+}
+
+void Data::free_memory(int smiles_index, int smarts_index)
+{
+	unsigned long key = smiles_index * 10000000 + smarts_index;
+	if ( matches.find(key) != matches.end())
+	{
+		if(DEBUG_OUT)
+		{
+//			map<unsigned long, vector<vector <int> > *>::iterator it;
+	//		for ( it=matches.begin() ; it != matches.end(); it++ )
+	//		  cerr << (*it).first << " => ?,  " << endl;
+			cerr << "  free matches with key: " << key << "\n" << flush;
+			cerr << "  num matches stored (before free): " << matches.size()<< "\n" << flush;
+		}
+
+		vector<vector <int> > * disjunced_map = matches[key];
+		delete(disjunced_map);
+		matches.erase(key);
+	}
 }
 
 vector<vector <int> > * Data::get_matches(int smiles_index, int smarts_index)
@@ -370,11 +692,12 @@ vector<vector <int> > * Data::get_matches(int smiles_index, int smarts_index)
 
 vector<vector <int> > * Data::get_matches(int smiles_index, int smarts_index, bool no_lookup)
 {
-	char buffer[255];
-	sprintf(buffer, "%d_%d",smiles_index,smarts_index);
-	string * key = new string(buffer);
+	unsigned long key = smiles_index * 10000000 + smarts_index;
+	// example
+	// smiles: 132, smarts: 13002
+	// -> key: 1320013002
 
-	if ( matches.find(*key) == matches.end() || no_lookup )
+	if ( matches.find(key) == matches.end() || no_lookup )
 	{
 		OBMol * mol = get_mol( smiles_index );
 		OBSmartsPattern smartsPattern;
@@ -421,11 +744,17 @@ vector<vector <int> > * Data::get_matches(int smiles_index, int smarts_index, bo
 //			if (!match)
 				disjunced_map->push_back(map[i]);
 		}
+
 		//cerr << "'" << *key << "'" << endl;
 
-		matches[*key] = disjunced_map;
+		matches[key] = disjunced_map;
+	}
+	else if(!CACHE_FRAGMENTS && matches.size()>1)
+	{
+		cerr << "WTF" << endl;
+		exit(1);
 	}
 
-	return matches[*key];
+	return matches[key];
 
 }

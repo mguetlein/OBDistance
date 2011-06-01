@@ -34,7 +34,7 @@ void CheckSmarts::checkSmarts() {
 			smartsPattern.Init(*data->get_smarts(i));
 
 			if (smartsPattern.Match(*data->get_mol(j), true))
-				cout << j << " ";
+				cout << data->get_id(j) << " ";
 		}
 
 		cout << "]\n";
@@ -58,10 +58,10 @@ void CheckSmarts::validateSmarts() {
 
 		for (unsigned int i = 0; i < occ->size(); i++)
 		{
-			vector<vector <int> > * map1 = data->get_matches(occ->at(i), j);
+			vector<vector <int> > * map1 = data->get_matches_from_id(occ->at(i), j);
 			if (map1->size() < 1)
 			{
-				cerr << "no match, smarts: " << *data->get_smarts(j)<< ",  smiles: "<< *data->get_smiles(occ->at(i)) << endl;
+				cerr << "no match, smarts: " << *data->get_smarts(j)<< ",  smiles: "<< *data->get_smiles_from_id(occ->at(i)) << endl;
 				noMatches++;
 			}
 			else

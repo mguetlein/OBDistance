@@ -21,7 +21,7 @@ using namespace OpenBabel;
 class MineDistances {
 public:
 	MineDistances(Data * data,
-			double rel_min_freq_per_class=0.01, double freq_ratio_tolerance=0.25);
+			double rel_min_freq_per_class=-1, double freq_ratio_tolerance=-1);
 			//unsigned int min_frequency=4, unsigned int min_frequency_per_class=2);
 
 	virtual ~MineDistances();
@@ -52,6 +52,7 @@ private:
 	bool checkMinFrequency(vector<int> * occurences, bool checkRatio);
 	bool checkSubSmarts(string * smarts1, string * smarts2);
 	bool calcDistance(int index1, int index2, vector<int> * occurences, bool check_freq);
+	void free_memory(int index);
 };
 
 #endif /* MINEDISTANCES_H_ */

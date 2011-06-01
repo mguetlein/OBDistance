@@ -32,7 +32,8 @@ public:
 class MolDistance
 {
 public:
-	virtual vector<double> * get_distances(int frag1_key, vector<vector <int> > * frag1, int frag2_key, vector<vector <int> > * frag2 ) = 0;
+	virtual vector<double> get_distances(int frag1_key, vector<vector <int> > * frag1, int frag2_key, vector<vector <int> > * frag2 ) = 0;
+	virtual void free_memory(int frag_key) {};
 };
 
 class MolDistance2D : public MolDistance {
@@ -40,7 +41,8 @@ public:
 	MolDistance2D(OBMol * mol);
 	virtual ~MolDistance2D();
 
-	vector<double> * get_distances(int frag1_key, vector<vector <int> > * frag1, int frag2_key, vector<vector <int> > * frag2 );
+	vector<double> get_distances(int frag1_key, vector<vector <int> > * frag1, int frag2_key, vector<vector <int> > * frag2 );
+	void free_memory(int frag_key);
 	void print(OBMol * mol);
 
 private:
@@ -53,8 +55,8 @@ public:
 	MolDistance3D(OBMol * mol);
 	virtual ~MolDistance3D();
 
-	vector<double> * get_distances(int frag1_key, vector<vector <int> > * frag1, int frag2_key, vector<vector <int> > * frag2 );
-
+	vector<double> get_distances(int frag1_key, vector<vector <int> > * frag1, int frag2_key, vector<vector <int> > * frag2 );
+	void free_memory(int frag_key);
 
 private:
 	int *separate_index;

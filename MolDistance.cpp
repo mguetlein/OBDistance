@@ -11,7 +11,8 @@ using namespace std;
 using namespace OpenBabel;
 
 extern bool DEBUG_OUT;
-bool DIST_DEBUG_OUT = DEBUG_OUT && false;
+bool DIST_DEBUG_OUT = DEBUG_OUT && true;
+extern bool CACHE_FRAGMENTS;
 
 
 // used to store the positions of fragments
@@ -54,14 +55,8 @@ ostream& operator << (ostream& os,  Pos3D * p)
 MolDistance3D::MolDistance3D(OBMol * mol)
 {
 	this->mol = mol;
-
-	// build 3d coordinates
-	if (DIST_DEBUG_OUT)
-		cerr << "    build 3D ...";
-	OBBuilder builder;
-	builder.Build(*mol);
-	if (DIST_DEBUG_OUT)
-		cerr << "    done" << endl;
+	//3D computation moved to get_mol in Data.cpp, as we cannot rely on Has3D
+	//(Has3D can return 0 even after successfull 3D optimization)
 
 	// set seprate_index:
 	// each atom gets an index, same index <-> same structure in the OBMol object
@@ -84,6 +79,31 @@ MolDistance3D::~MolDistance3D() {
 	delete(separate_index);
 }
 
+void MolDistance3D::free_memory(int frag_key)
+{
+	if ( frag_positions.find(frag_key) != frag_positions.end() )
+	{
+		if(DEBUG_OUT)
+			cerr << "  free positions & stuff in mol\n" << flush;
+
+		vector< Pos3D * > * pos = frag_positions[frag_key];
+		if(DEBUG_OUT)
+			cerr << "  free #positions for fragment: " << pos->size() << "\n" << flush;
+		vector< Pos3D * >::iterator it;
+		for ( it = pos->begin(); it != pos->end(); )
+		{
+			delete * it;
+			it = pos->erase(it);
+		}
+		delete(pos);
+		frag_positions.erase(frag_key);
+		vector< int > * sep_index = frag_sep_index[frag_key];
+		delete(sep_index);
+		frag_sep_index.erase(frag_key);
+		frag_max_radius.erase(frag_key);
+	}
+}
+
 // sets frag_positions array for fragment, i.e. a 3d-pos for each occurence for frag in the molecule
 // merge positions if distance closer than (maximum) radius of the fragment
 void MolDistance3D::mine_3d_positions( int frag_key, vector<vector <int> > * frag )
@@ -96,7 +116,6 @@ void MolDistance3D::mine_3d_positions( int frag_key, vector<vector <int> > * fra
 		vector< Pos3D * > * pos = new vector< Pos3D * >();
 		vector< int > * sep_index = new vector< int >();
 		double max_radius = 0;
-
 
 		for (unsigned int k = 0; k < frag->size(); k++)
 		{
@@ -161,6 +180,8 @@ void MolDistance3D::mine_3d_positions( int frag_key, vector<vector <int> > * fra
 								cerr << "          merging: "<< k << "-" << l << "\n";
 							pos->at(k)->merge( pos->at(k)->weight, pos->at(l), 1 );
 							pos->at(k)->weight++;
+//							Pos3D * p = pos->begin()+l;
+							delete(pos->at(l));
 							pos->erase(pos->begin()+l);
 							sep_index->erase(sep_index->begin()+l);
 							merge = true;
@@ -181,17 +202,23 @@ void MolDistance3D::mine_3d_positions( int frag_key, vector<vector <int> > * fra
 				}
 			}
 		}
+
 		frag_positions[frag_key] = pos;
 		frag_sep_index[frag_key] = sep_index;
 		frag_max_radius[frag_key] = max_radius;
 	}
-}
+	else if(!CACHE_FRAGMENTS && frag_positions.size()>1)
+	{
+		cerr << "WTF" << endl;
+		exit(1);
+	}
 
+}
 
 // compute distance between two fragments
 // distances are ommitted if they are too small
 // distances are merged if they are very similar
-vector< double > *MolDistance3D::get_distances( int frag1_key, vector<vector <int> > * frag1, int frag2_key, vector<vector <int> > * frag2 )
+vector< double > MolDistance3D::get_distances( int frag1_key, vector<vector <int> > * frag1, int frag2_key, vector<vector <int> > * frag2 )
 {
 	if (DIST_DEBUG_OUT)
 		cerr << "    frag 1\n";
@@ -200,7 +227,7 @@ vector< double > *MolDistance3D::get_distances( int frag1_key, vector<vector <in
 		cerr << "    frag 2\n";
 	mine_3d_positions(frag2_key, frag2);
 
-	vector< double > * distances = new vector< double >();
+	vector< double > distances; // = new vector< double >();
 
 	// use min-max-radius (i.e. take smaller radius of both (max-)radius) for merging, and as min distance
 	double min_max_radius = min(frag_max_radius[frag1_key],frag_max_radius[frag2_key]);
@@ -233,7 +260,7 @@ vector< double > *MolDistance3D::get_distances( int frag1_key, vector<vector <in
 					{
 						if (DIST_DEBUG_OUT)
 							cerr << "      "<<k<<"-"<<l<<": "<<d<<"\n";
-						distances->push_back(d);
+						distances.push_back(d);
 					}
 					else if (DIST_DEBUG_OUT)
 						cerr << "      "<<k<<"-"<<l<<": "<<d<<" DISTANCE TOO SMALL\n";
@@ -245,11 +272,11 @@ vector< double > *MolDistance3D::get_distances( int frag1_key, vector<vector <in
 	}
 
 	// merge distances that are very similar
-	if (distances->size()>1)
+	if (distances.size()>1)
 	{
 		if (DIST_DEBUG_OUT)
 			cerr << "    sort distances\n";
-		std::sort(distances->begin(), distances->end());
+		std::sort(distances.begin(), distances.end());
 
 		// if one fragment is a single-atom fragment the min_max_radius is 0
 		// in this case merge distance with 0.25A differnce
@@ -259,17 +286,17 @@ vector< double > *MolDistance3D::get_distances( int frag1_key, vector<vector <in
 			cerr << "    merge distances (radius: "<< min_max_radius <<")\n";
 
 		int merge_weight = 1;
-		for (unsigned int j = 0; j < distances->size()-1; j++)
+		for (unsigned int j = 0; j < distances.size()-1; j++)
 		{
-			if ( abs(distances->at(j) - distances->at(j+1)) < min_max_radius )
+			if ( abs(distances.at(j) - distances.at(j+1)) < min_max_radius )
 			{
-				double m = (merge_weight * distances->at(j) + distances->at(j+1)) / (double)(merge_weight+1);
+				double m = (merge_weight * distances.at(j) + distances.at(j+1)) / (double)(merge_weight+1);
 				if (DIST_DEBUG_OUT)
 					cerr << "      merge: "<< j << "-" << (j+1) << " " <<
-						 distances->at(j) << "(*"<< merge_weight << ") + " << distances->at(j+1) << " -> " << m << "\n";
-				distances->at(j) = m;
+						 distances.at(j) << "(*"<< merge_weight << ") + " << distances.at(j+1) << " -> " << m << "\n";
+				distances.at(j) = m;
 				merge_weight++;
-				distances->erase(distances->begin()+(j+1));
+				distances.erase(distances.begin()+(j+1));
 				j--;
 			}
 			else
@@ -277,8 +304,8 @@ vector< double > *MolDistance3D::get_distances( int frag1_key, vector<vector <in
 		}
 		if (DIST_DEBUG_OUT)
 		{
-			for (unsigned int j = 0; j < distances->size(); j++)
-				cerr << "      "<<distances->at(j)<<"\n";
+			for (unsigned int j = 0; j < distances.size(); j++)
+				cerr << "      "<<distances.at(j)<<"\n";
 		}
 	}
 	if (DIST_DEBUG_OUT)
@@ -286,8 +313,8 @@ vector< double > *MolDistance3D::get_distances( int frag1_key, vector<vector <in
 
 	if (!DIST_DEBUG_OUT && DEBUG_OUT)
 	{
-		for (unsigned int j = 0; j < distances->size(); j++)
-			cerr << "      "<<distances->at(j)<<"\n";
+		for (unsigned int j = 0; j < distances.size(); j++)
+			cerr << "      "<<distances.at(j)<<"\n";
 		if (DIST_DEBUG_OUT)
 			cerr << "\n";
 	}
@@ -358,9 +385,14 @@ void MolDistance2D::print(OBMol * mol)
 		}
 }
 
-vector< double > *MolDistance2D::get_distances( int frag1_key, vector<vector <int> > * frag1, int frag2_key, vector<vector <int> > * frag2 )
+void MolDistance2D::free_memory(int frag_key)
 {
-	vector< double > * distances = new vector< double >();
+  //nothing to delete, all store in mol (independent of frag)
+}
+
+vector< double > MolDistance2D::get_distances( int frag1_key, vector<vector <int> > * frag1, int frag2_key, vector<vector <int> > * frag2 )
+{
+	vector< double > distances; // = new vector< double >();
 	//if (DIST_DEBUG_OUT)
 	//map->print(data->get_mol(occurences->at(i)));
 
@@ -426,7 +458,7 @@ vector< double > *MolDistance2D::get_distances( int frag1_key, vector<vector <in
 
 				bool match = false;
 				vector<double>::iterator it;
-				for (it = distances->begin(); it < distances->end(); it++)
+				for (it = distances.begin(); it < distances.end(); it++)
 				{
 					if (*it == occ_dist)
 					{
@@ -437,7 +469,7 @@ vector< double > *MolDistance2D::get_distances( int frag1_key, vector<vector <in
 						break;
 				}
 				if (!match)
-					distances->insert(it, occ_dist);
+					distances.insert(it, occ_dist);
 
 
 				/*

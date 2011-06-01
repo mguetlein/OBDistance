@@ -16,7 +16,8 @@
 using namespace std;
 using namespace OpenBabel;
 
-bool DEBUG_OUT = false;
+bool DEBUG_OUT = false; // set via -v
+bool CACHE_FRAGMENTS = true;
 
 void test()
 {
@@ -100,8 +101,48 @@ void test()
 
 }
 
+void compute3d(char *smiles)
+{
+	cerr << "Computing 3d for smiles: "<< smiles << endl;
+    OBMol * mol = new OBMol();
+    OBConversion obconversion;
+    obconversion.SetInFormat("smiles");
+    obconversion.ReadString(mol,smiles);
+    cerr << "formula "<< mol->GetFormula() << "\n";
+    cerr << "has3D: " << mol->Has3D() << "\n";
+    OBBuilder builder;
+    builder.Build(*mol);
+    cerr << "has3D: " << mol->Has3D() << "\n";
+    delete(mol);
+}
+
+void readSDF()
+{
+    OBMol * molSmi = new OBMol();
+    OBConversion obconversionSmi;
+    obconversionSmi.SetInFormat("smiles");
+    obconversionSmi.ReadString(molSmi,"O=C(C(C(C=C3)=CC=C3O)=CO2)C1=C2C=C(O)C=C1O");
+    cerr << "formula "<< molSmi->GetFormula() << "\n";
+
+	  OBConversion obconversion;
+	  obconversion.SetInFormat("sdf");
+	  OBMol mol;
+
+	  bool notatend = obconversion.ReadFile(&mol,"/home/martin/data/tmp/corinna_plz/nctrer_3D.sdf");
+	  while (notatend)
+	  {
+		std::cout << "formula " << mol.GetFormula() << " Molecular Weight: " << mol.GetMolWt() << " 3D? " << mol.Has3D() << std::endl;
+
+		mol.Clear();
+		notatend = obconversion.Read(&mol);
+	  }
+}
+
 
 int main(int argc, char **argv) {
+
+//	readSDF();
+//	return 0;
 
 //	OBMol * mol = new OBMol();
 //	OBConversion obconversion;
@@ -125,7 +166,8 @@ int main(int argc, char **argv) {
 //	builder.Build(*mol);
 //	cout << "Has3D: " << mol->Has3D() << "\n";
 
-	//test();
+
+//	test();
 //	exit(0);
 
 	int status = 0;
@@ -135,6 +177,8 @@ int main(int argc, char **argv) {
 	char* fragment_file = 0;
 	char* activity_file = 0;
 	char* dist_file = 0;
+	char* sdf_file = 0;
+//	char* sdf_smiles_file = 0;
 
 	bool check_smarts = false;
 	bool mine_distance = false;
@@ -144,12 +188,15 @@ int main(int argc, char **argv) {
 	bool enable_3d = false;
 	bool one_frag_distances = false;
 
+
+	char* compute_3d_from_smiles = 0;
+
 //	int min_freq = 4;
 //	int min_freq_per_class = 2;
 	double rel_min_freq_per_class = 0.01;
 	double freq_ratio_tolerance = 0.25;
 
-	while ((c = getopt(argc, argv, "s:f:c:pdam:i:t:xzovr:e:")) != -1) {
+	while ((c = getopt(argc, argv, "s:f:c:pdam:i:t:xzovr:e:q:l:")) != -1) {
 		switch (c) {
 		case 's':
 			smi_file = optarg;
@@ -163,6 +210,12 @@ int main(int argc, char **argv) {
 		case 't':
 			dist_file = optarg;
 			break;
+		case 'l':
+			sdf_file = optarg;
+			break;
+//		case 'y':
+//			sdf_smiles_file = optarg;
+//			break;
 		case 'p':
 			check_smarts = true;
 			break;
@@ -204,6 +257,9 @@ int main(int argc, char **argv) {
 		case 'v':
 			DEBUG_OUT = true;
 			break;
+		case 'q':
+			compute_3d_from_smiles = optarg;
+			break;
 		case ':':
 			status = 1;
 			break;
@@ -211,6 +267,12 @@ int main(int argc, char **argv) {
 			status = 1;
 			break;
 		}
+	}
+
+	if (compute_3d_from_smiles)
+	{
+		compute3d(compute_3d_from_smiles);
+		return 0;
 	}
 
 	if (!smi_file | !fragment_file)
@@ -234,9 +296,17 @@ int main(int argc, char **argv) {
 	}
 	else if (check_distance)
 	{
-		if (!activity_file || !dist_file)
+		if (!activity_file || !dist_file || freq_set)
 			status = 1;
 	}
+
+	if (!enable_3d)
+	{
+		if (sdf_file)// || sdf_smiles_file)
+			status = 1;
+	}
+//	if (sdf_file && !sdf_smiles_file)
+//		status = 1;
 
 	// print usage and examples for incorrect input
 	if (status) {
@@ -254,8 +324,11 @@ int main(int argc, char **argv) {
 		     << "\t-r <relative minimum frequency per class> (default: 0.01, only used for mine distances)\n"
 		     << "\t-e <frequency ratio tolerance> (default: 0.25, only used for mine distances)\n"
 		     << "\t-z (Enable 3d) (default: off)\n"
+		     << "\t-l <sdf file> (reads 3d structure of smiles-molecules from sdf file)\n"
+//		     << "\t-y <sdf smiles file> (mandatory to assign sdf-molecules to smiles)\n"
 		     << "\t-o (Mine one fragment distances) (default: off)\n"
 		     << "\t-v (Verbose, i.e. print debug messages) (default: off)\n"
+		     << "\t-q <smiles> (Debug option: compute 3d from smiles and exit) (default: off)\n"
 		     << "\n"
 		     << "examples:\n"
 		     << " - Check fragments with aromaticity:\n"
@@ -263,14 +336,21 @@ int main(int argc, char **argv) {
 			 << " - Mine distances:\n"
 			 << "   " << argv[0] << " -s file.smi -f file.linfrag -c file.class -d -m 6 -i 3\n"
 			 << " - Check distances:\n"
-			 << "   " << argv[0] << " -s file.smi -f file.linfrag -c file.class -t file.dist -x\n";
-		     ;
+			 << "   " << argv[0] << " -s file.smi -f file.linfrag -c file.class -t file.dist -x\n"
+			 << "\n"
+			 << "extended options via environment variables:\n"
+			 << " - disable fragment caching with OBD_CACHE_FRAGMENTS=0, default is 1\n";
 		return (status);
 	}
 
-	Data * d = new Data(smi_file, fragment_file, aromaticity, enable_3d, activity_file, dist_file);
+	Data * d = new Data(smi_file, fragment_file, aromaticity, enable_3d, activity_file, dist_file, sdf_file); //, sdf_smiles_file);
 	cerr << "Aromaticity: "<< aromaticity << endl;
 	cerr << "3D-Enabled: "<< enable_3d << endl;
+
+	char * cache_fragments = getenv("OBD_CACHE_FRAGMENTS");
+	if (cache_fragments!=NULL && strcmp(cache_fragments,"0")==0)
+		CACHE_FRAGMENTS = false;
+	cerr << "Fragment caching enabled: "<< CACHE_FRAGMENTS << endl;
 
 	if (check_smarts)
 	{
